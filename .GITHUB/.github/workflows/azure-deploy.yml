@@ -1,0 +1,10 @@
+name: Deploy GBS Window Survey to Azure
+on:
+Push:
+branches:
+-main
+workflow_dispatch
+jobs:
+deploy:
+runs-on: ubuntu-latest
+steps:
