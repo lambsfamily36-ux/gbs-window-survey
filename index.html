@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="GBS Survey">
   <title>GBS Joinery Window Site Survey</title>
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
   <style>
     /* Reset & Base Styles for iPad Safari & Print */
     * {
@@ -682,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.5</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.7</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -1417,9 +1418,30 @@
       }
       function gbsDriveUrl() { return "https://graph.microsoft.com/v1.0/drives/" + encodeURIComponent(gbsFolder.driveId); }
       function gbsGraphFolderUrl() { return gbsDriveUrl() + "/items/" + encodeURIComponent(gbsFolder.id); }
+      var gbsDataFolderId = null;
+      async function gbsEnsureDataFolder(token) {
+        var url = gbsGraphFolderUrl() + ":/Survey%20Data";
+        var r = await fetch(url,{headers:gbsGraphHeaders(token),cache:"no-store"});
+        if(r.status===404){
+          var c=await fetch(gbsGraphFolderUrl()+"/children",{method:"POST",headers:gbsGraphHeaders(token,{"Content-Type":"application/json"}),body:JSON.stringify({name:"Survey Data",folder:{},"@microsoft.graph.conflictBehavior":"fail"})});
+          if(!c.ok && c.status!==409) throw new Error("Cannot create Survey Data folder ("+c.status+")");
+          r=await fetch(url,{headers:gbsGraphHeaders(token),cache:"no-store"});
+        }
+        if(!r.ok) throw new Error("Survey Data folder access failed ("+r.status+")");
+        var d=await r.json(); if(!d.folder||!d.id) throw new Error("Survey Data is not a folder");
+        gbsDataFolderId=d.id;
+      }
+      function gbsDataUrl(){return gbsDriveUrl()+"/items/"+encodeURIComponent(gbsDataFolderId);}
       async function gbsListCloudFiles(token) {
         await gbsResolveFolder(token);
-        var url = gbsGraphFolderUrl() + "/children?$select=id,name,file,size,lastModifiedDateTime";
+        await gbsEnsureDataFolder(token);
+        var root=await gbsListAt(token,gbsGraphFolderUrl());
+        var data=await gbsListAt(token,gbsDataUrl());
+        data.forEach(function(f){f.inData=true;});
+        return root.concat(data);
+      }
+      async function gbsListAt(token,folderUrl) {
+        var url = folderUrl + "/children?$select=id,name,file,folder,size,lastModifiedDateTime";
         var all = [];
         while (url) {
           var resp = await fetch(url, { headers: gbsGraphHeaders(token) });
@@ -1435,14 +1457,41 @@
         if (!resp.ok) throw new Error("Could not download " + file.name + " (" + resp.status + ").");
         return await resp.json();
       }
-      async function gbsUploadCloudSurvey(token, entry) {
-        if (!entry || !entry.payload || !entry.surveyId) return;
-        var safeId = String(entry.surveyId).replace(/[^a-zA-Z0-9_-]/g, "_");
-        var fileName = "survey_" + safeId + ".json";
-        var url = gbsGraphFolderUrl() + ":/" + encodeURIComponent(fileName) + ":/content";
-        var body = JSON.stringify({ gbsSurveyFormat: 1, surveyId: entry.surveyId, savedAt: entry.savedAt || new Date().toISOString(), payload: entry.payload });
-        var resp = await fetch(url, { method: "PUT", headers: gbsGraphHeaders(token, { "Content-Type": "application/json" }), body: body });
-        if (!resp.ok) throw new Error("OneDrive could not save " + fileName + " (" + resp.status + ").");
+      function gbsBase(entry) {
+        return ((entry.jobNo || "Unnumbered") + " - " + (entry.clientName || "Customer") + " - " + entry.surveyId).replace(/[\\/:*?"<>|#%]/g, "_").slice(0,160);
+      }
+      async function gbsPut(token, name, body, type) {
+        var r = await fetch((type==="application/json" ? gbsDataUrl() : gbsGraphFolderUrl()) + ":/" + encodeURIComponent(name) + ":/content", {method:"PUT",headers:gbsGraphHeaders(token,{"Content-Type":type}),body:body});
+        if (!r.ok) throw new Error("Could not save " + name + " (" + r.status + ")");
+      }
+      async function gbsNumber(token, entries, id) {
+        var files = await gbsListCloudFiles(token), max = 0;
+        entries.forEach(function(e){var m=/^GBS\s*-\s*(\d+)$/i.exec(e.jobNo||""); if(m) max=Math.max(max,+m[1]);});
+        files.forEach(function(f){var m=/^GBS-(\d+)(?: - |$)/i.exec(f.name); if(m) max=Math.max(max,+m[1]);});
+        for(var n=max+1;n<max+101;n++) {
+          var ref="GBS-"+String(n).padStart(2,"0");
+          var r=await fetch(gbsDataUrl()+"/children",{method:"POST",headers:gbsGraphHeaders(token,{"Content-Type":"application/json"}),body:JSON.stringify({name:ref,folder:{},"@microsoft.graph.conflictBehavior":"fail"})});
+          if(r.ok) return ref;
+          if(r.status!==409) throw new Error("Job number allocation failed ("+r.status+")");
+        }
+        throw new Error("Could not reserve job number");
+      }
+      function gbsPdf(entry) {
+        if(!window.jspdf) throw new Error("PDF library unavailable; retry online");
+        var d=new window.jspdf.jsPDF(), y=18;
+        function line(t){d.setFontSize(10); var lines=d.splitTextToSize(String(t),180); lines.forEach(function(l){if(y>280){d.addPage();y=18;}d.text(l,15,y);y+=5;});}
+        function heading(t){if(y>260){d.addPage();y=18;}d.setFontSize(15);d.text(t,15,y);y+=9;}
+        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(v===null||v===""||v===undefined||k==="sketchData"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():k.replace(/([a-z])([A-Z])/g,"$1 $2"))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
+        function image(src){if(!src)return;var props=d.getImageProperties(src), w=Math.min(180,100*props.width/props.height), h=w*props.height/props.width;if(y+h>280){d.addPage();y=18;}d.addImage(src,props.fileType,15,y,w,h);y+=h+5;}
+        heading("GBS JOINERY - WINDOW SITE SURVEY");fields(entry.payload.job);
+        (entry.payload.windows||[]).forEach(function(w,i){d.addPage();y=18;heading("Window "+(w.mark||i+1));fields(w);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);});});
+        return d.output("blob");
+      }
+      async function gbsUploadCloudSurvey(token, entry, existing) {
+        var base=existing && existing.cloudName ? existing.cloudName.replace(/\.json$/i,"") : gbsBase(entry);
+        var pdf=gbsPdf(entry);
+        await gbsPut(token,base+".json",JSON.stringify({gbsSurveyFormat:1,surveyId:entry.surveyId,savedAt:entry.savedAt,payload:entry.payload}),"application/json");
+        await gbsPut(token,base+".pdf",pdf,"application/pdf");
       }
       async function gbsSyncSurveys(interactive) {
         if (gbsCloudSyncBusy || gbsRedirecting || navigator.onLine === false) return;
@@ -1456,10 +1505,10 @@
           var remote = await gbsListCloudFiles(token);
           var cloudEntries = [];
           for (var i = 0; i < remote.length; i++) {
-            if (remote[i].file && /^survey_.+\.json$/i.test(remote[i].name)) {
+            if (remote[i].file && /^(survey_.+|.+ - survey_.+)\.json$/i.test(remote[i].name)) {
               try {
                 var obj = await gbsDownloadCloudSurvey(token, remote[i]);
-                if (obj && obj.payload && obj.surveyId) cloudEntries.push({ surveyId: obj.surveyId, savedAt: obj.savedAt || remote[i].lastModifiedDateTime || "", jobNo: (obj.payload.job||{}).jobNo||"", clientName: (obj.payload.job||{}).clientName||"", siteAddress: (obj.payload.job||{}).siteAddress||"", postcode: (obj.payload.job||{}).postcode||"", surveyDate: (obj.payload.job||{}).surveyDate||"", windowCount: (obj.payload.windows||[]).length, payload: obj.payload });
+                if (obj && obj.payload && obj.surveyId) cloudEntries.push({ cloudName: remote[i].name, inData: !!remote[i].inData, surveyId: obj.surveyId, savedAt: obj.savedAt || remote[i].lastModifiedDateTime || "", jobNo: (obj.payload.job||{}).jobNo||"", clientName: (obj.payload.job||{}).clientName||"", siteAddress: (obj.payload.job||{}).siteAddress||"", postcode: (obj.payload.job||{}).postcode||"", surveyDate: (obj.payload.job||{}).surveyDate||"", windowCount: (obj.payload.windows||[]).length, payload: obj.payload });
               } catch (ignoreFile) { throw new Error("Could not safely read " + remote[i].name + ": " + (ignoreFile.message || ignoreFile)); }
             }
           }
@@ -1471,13 +1520,18 @@
             if (!prev || String(e.savedAt||"") >= String(prev.savedAt||"")) byId[e.surveyId] = e;
           });
           var merged = Object.keys(byId).map(function(k){ return byId[k]; }).sort(function(a,b){ return String(b.savedAt||"").localeCompare(String(a.savedAt||"")); });
+          for (var k=0;k<merged.length;k++) {
+            var e=merged[k];
+            if (!e.jobNo) { e.jobNo=await gbsNumber(token,merged,e.surveyId); e.payload.job.jobNo=e.jobNo; e.savedAt=new Date().toISOString(); }
+            if(surveyData.surveyId===e.surveyId && !surveyData.job.jobNo){surveyData.job.jobNo=e.jobNo;document.querySelector('[data-job="jobNo"]').value=e.jobNo;localStorage.setItem(STORAGE_KEY,JSON.stringify(surveyData));await writeSurveyToIDB(surveyData);}
+          }
           await writeArchiveList(merged);
           // Only upload newer local entries; do not rewrite downloaded files.
           var remoteById = Object.create(null);
-          cloudEntries.forEach(function(e){ remoteById[e.surveyId] = e; });
+          cloudEntries.forEach(function(e){ var old=remoteById[e.surveyId]; if(!old || String(e.savedAt)>String(old.savedAt) || (e.savedAt===old.savedAt && e.inData)) remoteById[e.surveyId] = e; });
           for (var j = 0; j < merged.length; j++) {
             var existing = remoteById[merged[j].surveyId];
-            if (!existing || String(merged[j].savedAt || "") > String(existing.savedAt || "")) await gbsUploadCloudSurvey(token, merged[j]);
+            if (!existing || !existing.inData || String(merged[j].savedAt || "") > String(existing.savedAt || "") || !remote.some(function(f){return f.name===existing.cloudName.replace(/\.json$/i,".pdf");})) await gbsUploadCloudSurvey(token, merged[j], existing);
           }
           updateSavedSurveyCountBadge();
           gbsCloudButton("OneDrive: Signed in • Sync now");
@@ -1510,7 +1564,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v1.5"];
+        var lines = ["OneDrive diagnostics v1.7"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
