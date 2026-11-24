@@ -682,7 +682,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey</h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.3</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -691,6 +691,7 @@
         <button type="button" class="btn btn-amber" onclick="addWindow()">+ Add Window</button>
         <button type="button" class="btn btn-green" onclick="saveSurvey()">Save Survey</button>
         <button type="button" class="btn btn-light" id="cloudSyncButton" onclick="gbsMicrosoftConnectOrSync()">OneDrive: Sign in</button>
+        <button type="button" class="btn" onclick="gbsResetMicrosoftSignIn()">Reset Microsoft Sign-in</button>
         <button type="button" class="btn" onclick="openSavedSurveysModal()">Saved Surveys (<span id="savedSurveyCount">0</span>)</button>
         <button type="button" class="btn" onclick="exportSurveyJson()">Export JSON</button>
         <button type="button" class="btn btn-light" onclick="printSurvey()">Print / PDF</button>
@@ -1339,7 +1340,7 @@
           authority: "https://login.microsoftonline.com/c822605e-2ecd-48a1-a3a4-ac7a64c153ec",
           redirectUri: window.location.origin
         },
-        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true }
+        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
       };
       var GBS_GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
       var GBS_ONEDRIVE_FOLDER = "Desktop/Customer database/Survey in progress/Saved surveys";
@@ -1350,7 +1351,7 @@
 
       function gbsCloudButton(text) {
         var b = document.getElementById("cloudSyncButton");
-        if (b) b.textContent = text;
+        if (b) { b.textContent = text; b.disabled = gbsCloudSyncBusy || gbsRedirecting; }
         var sub = document.getElementById("connectionStatusSub");
         if (sub) sub.textContent = text.indexOf("Signed in") >= 0 ? "Microsoft OneDrive • Sync enabled" : "iPad Field Survey & Offline Ready • " + text;
       }
@@ -1359,23 +1360,44 @@
         if (!gbsMsalApp) gbsMsalApp = new msal.PublicClientApplication(GBS_MSAL_CONFIG);
         return gbsMsalApp;
       }
+      var gbsAuthReady = null;
+      var gbsRedirecting = false;
+      function gbsPrepareAuth() {
+        if (!gbsAuthReady) {
+          gbsAuthReady = (async function () {
+            var app = gbsInitMsal();
+            var result = await app.handleRedirectPromise();
+            gbsCloudAccount = (result && result.account) || app.getActiveAccount() || app.getAllAccounts()[0] || null;
+            if (gbsCloudAccount) app.setActiveAccount(gbsCloudAccount);
+            return result;
+          })().catch(function(err) { gbsAuthReady = null; throw err; });
+        }
+        return gbsAuthReady;
+      }
       async function gbsGetToken(interactive) {
+        var result = await gbsPrepareAuth();
         var app = gbsInitMsal();
-        var accounts = app.getAllAccounts();
-        if (!gbsCloudAccount && accounts.length) gbsCloudAccount = accounts[0];
-        if (!gbsCloudAccount && interactive) {
-          var login = await app.loginPopup({ scopes: GBS_GRAPH_SCOPES });
-          gbsCloudAccount = login.account;
+        if (result && result.accessToken) {
+          // Subsequent requests use the normal token cache.
+          gbsAuthReady = Promise.resolve(null);
+          return result.accessToken;
         }
-        if (!gbsCloudAccount) return null;
+        if (gbsCloudAccount) {
+          try {
+            return (await app.acquireTokenSilent({ scopes: GBS_GRAPH_SCOPES, account: gbsCloudAccount })).accessToken;
+          } catch (err) {
+            if (!interactive) return null;
+            if (!(err instanceof msal.InteractionRequiredAuthError)) throw err;
+          }
+        } else if (!interactive) return null;
+        if (gbsRedirecting) return null;
+        gbsRedirecting = true;
+        gbsCloudButton("OneDrive: Signing in…");
         try {
-          var token = await app.acquireTokenSilent({ scopes: GBS_GRAPH_SCOPES, account: gbsCloudAccount });
-          return token.accessToken;
-        } catch (e) {
-          if (!interactive) return null;
-          var token2 = await app.acquireTokenPopup({ scopes: GBS_GRAPH_SCOPES, account: gbsCloudAccount });
-          return token2.accessToken;
-        }
+          if (gbsCloudAccount) await app.acquireTokenRedirect({ scopes: GBS_GRAPH_SCOPES, account: gbsCloudAccount });
+          else await app.loginRedirect({ scopes: GBS_GRAPH_SCOPES });
+        } catch (err) { gbsRedirecting = false; throw err; }
+        return null;
       }
       function gbsGraphHeaders(token, extra) {
         var h = { Authorization: "Bearer " + token };
@@ -1414,11 +1436,13 @@
         if (!resp.ok) throw new Error("OneDrive could not save " + fileName + " (" + resp.status + ").");
       }
       async function gbsSyncSurveys(interactive) {
-        if (gbsCloudSyncBusy) return;
+        if (gbsCloudSyncBusy || gbsRedirecting || navigator.onLine === false) return;
+        if (gbsCloudSyncTimer) clearTimeout(gbsCloudSyncTimer);
         gbsCloudSyncBusy = true;
+        gbsCloudButton("OneDrive: Connecting…");
         try {
           var token = await gbsGetToken(!!interactive);
-          if (!token) { gbsCloudButton("OneDrive: Sign in"); return; }
+          if (!token) { if (!gbsRedirecting) gbsCloudButton("OneDrive: Sign in"); return; }
           gbsCloudButton("OneDrive: Syncing…");
           var remote = await gbsListCloudFiles(token);
           var cloudEntries = [];
@@ -1427,7 +1451,7 @@
               try {
                 var obj = await gbsDownloadCloudSurvey(token, remote[i]);
                 if (obj && obj.payload && obj.surveyId) cloudEntries.push({ surveyId: obj.surveyId, savedAt: obj.savedAt || remote[i].lastModifiedDateTime || "", jobNo: (obj.payload.job||{}).jobNo||"", clientName: (obj.payload.job||{}).clientName||"", siteAddress: (obj.payload.job||{}).siteAddress||"", postcode: (obj.payload.job||{}).postcode||"", surveyDate: (obj.payload.job||{}).surveyDate||"", windowCount: (obj.payload.windows||[]).length, payload: obj.payload });
-              } catch (ignoreFile) { console.warn("Skipping invalid cloud survey", remote[i].name, ignoreFile); }
+              } catch (ignoreFile) { throw new Error("Could not safely read " + remote[i].name + ": " + (ignoreFile.message || ignoreFile)); }
             }
           }
           var local = await readArchiveList();
@@ -1439,8 +1463,13 @@
           });
           var merged = Object.keys(byId).map(function(k){ return byId[k]; }).sort(function(a,b){ return String(b.savedAt||"").localeCompare(String(a.savedAt||"")); });
           await writeArchiveList(merged);
-          // Upload local/merged surveys individually, so one file cannot overwrite the whole archive.
-          for (var j = 0; j < merged.length; j++) await gbsUploadCloudSurvey(token, merged[j]);
+          // Only upload newer local entries; do not rewrite downloaded files.
+          var remoteById = Object.create(null);
+          cloudEntries.forEach(function(e){ remoteById[e.surveyId] = e; });
+          for (var j = 0; j < merged.length; j++) {
+            var existing = remoteById[merged[j].surveyId];
+            if (!existing || String(merged[j].savedAt || "") > String(existing.savedAt || "")) await gbsUploadCloudSurvey(token, merged[j]);
+          }
           updateSavedSurveyCountBadge();
           gbsCloudButton("OneDrive: Signed in • Sync now");
           showNotice("OneDrive sync complete. " + merged.length + " saved survey(s) available on this device.", "info");
@@ -1448,13 +1477,30 @@
           console.error(err);
           gbsCloudButton("OneDrive: Retry sync");
           showNotice("OneDrive sync did not finish: " + (err.message || err) + ". Your survey is still saved on this device.", "warn");
-        } finally { gbsCloudSyncBusy = false; }
+        } finally { gbsCloudSyncBusy = false; var b = document.getElementById("cloudSyncButton"); if (b) b.disabled = gbsRedirecting; }
       }
+      window.gbsResetMicrosoftSignIn = function () {
+        if (gbsCloudSyncBusy) { showNotice("Please wait for the current sync to finish.", "warn"); return; }
+        if (!confirm("Reset Microsoft sign-in on this device? Your saved surveys will not be deleted.")) return;
+        if (gbsCloudSyncTimer) clearTimeout(gbsCloudSyncTimer);
+        try {
+          [window.localStorage, window.sessionStorage].forEach(function(store) {
+            Object.keys(store).forEach(function(key) {
+              if (/^msal\./i.test(key)) store.removeItem(key);
+            });
+          });
+          document.cookie.split(";").forEach(function(cookie) {
+            var key = cookie.split("=")[0].trim();
+            if (/^msal\./i.test(key)) document.cookie = key + "=; Max-Age=0; path=/; SameSite=Lax";
+          });
+          window.location.replace(window.location.origin + window.location.pathname + window.location.search);
+        } catch (err) { showNotice("Microsoft reset failed: " + (err.message || err), "warn"); }
+      };
       window.gbsMicrosoftConnectOrSync = function () { gbsSyncSurveys(true); };
       function gbsScheduleCloudSync() {
-        if (!gbsCloudAccount) return;
+        if (!gbsCloudAccount || navigator.onLine === false) return;
         if (gbsCloudSyncTimer) clearTimeout(gbsCloudSyncTimer);
-        gbsCloudSyncTimer = setTimeout(function(){ gbsSyncSurveys(false); }, 1800);
+        gbsCloudSyncTimer = setTimeout(function retry() { if (gbsCloudSyncBusy) { gbsCloudSyncTimer = setTimeout(retry, 1800); return; } gbsSyncSurveys(false); }, 1800);
       }
 
       var STORAGE_KEY = "gbs_window_survey_original_v1";
@@ -2183,6 +2229,7 @@
             upsertSurveyInArchive(surveyData)
           ]).then(function (results) {
             var idbSaved = results[0];
+            gbsScheduleCloudSync();
             updateSavedSurveyCountBadge();
             if (refreshModal) {
               renderSavedSurveysList();
@@ -3199,18 +3246,19 @@
         updateSavedSurveyCountBadge();
         registerOfflineServiceWorker();
         syncFromOfflineDB();
-        try {
-          var msalApp = gbsInitMsal();
-          var savedAccounts = msalApp.getAllAccounts();
-          if (savedAccounts.length) {
-            gbsCloudAccount = savedAccounts[0];
-            gbsCloudButton("OneDrive: Signed in • Sync now");
-            setTimeout(function(){ gbsSyncSurveys(false); }, 900);
+        gbsPrepareAuth().then(function () {
+          if (gbsCloudAccount) {
+            gbsCloudButton("OneDrive: Connected • Sync pending");
+            gbsScheduleCloudSync();
           }
-        } catch (msalInitError) { console.warn("Microsoft sign-in not initialized", msalInitError); }
+        }).catch(function (err) {
+          gbsCloudButton("OneDrive: Retry sync");
+          showNotice("Microsoft sign-in could not finish: " + (err.message || err) + ". Local surveys are retained.", "warn");
+        });
         window.addEventListener("online", function () {
           updateNetworkBadge();
           showNotice("Connection restored. Your survey is saved locally.", "info");
+          gbsPrepareAuth().then(gbsScheduleCloudSync).catch(function(){ gbsCloudButton("OneDrive: Retry sync"); });
         });
         window.addEventListener("offline", function () {
           updateNetworkBadge();
