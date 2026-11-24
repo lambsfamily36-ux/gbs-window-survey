@@ -682,7 +682,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.3</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.4</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -691,6 +691,7 @@
         <button type="button" class="btn btn-amber" onclick="addWindow()">+ Add Window</button>
         <button type="button" class="btn btn-green" onclick="saveSurvey()">Save Survey</button>
         <button type="button" class="btn btn-light" id="cloudSyncButton" onclick="gbsMicrosoftConnectOrSync()">OneDrive: Sign in</button>
+        <button type="button" class="btn" id="cloudDiagnosticButton" onclick="gbsDiagnoseOneDrive()">Check OneDrive</button>
         <button type="button" class="btn" onclick="gbsResetMicrosoftSignIn()">Reset Microsoft Sign-in</button>
         <button type="button" class="btn" onclick="openSavedSurveysModal()">Saved Surveys (<span id="savedSurveyCount">0</span>)</button>
         <button type="button" class="btn" onclick="exportSurveyJson()">Export JSON</button>
@@ -1495,6 +1496,44 @@
           });
           window.location.replace(window.location.origin + window.location.pathname + window.location.search);
         } catch (err) { showNotice("Microsoft reset failed: " + (err.message || err), "warn"); }
+      };
+      window.gbsDiagnoseOneDrive = async function () {
+        if (gbsCloudSyncBusy || gbsRedirecting) { showNotice("Wait for the current connection to finish.", "warn"); return; }
+        gbsCloudSyncBusy = true;
+        var button = document.getElementById("cloudDiagnosticButton");
+        if (button) button.disabled = true;
+        var lines = ["OneDrive diagnostics v1.4"];
+        async function check(label, path, fields) {
+          try {
+            var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
+            var data = await r.json();
+            lines.push(label + ": " + r.status + (r.ok ? " OK" + (fields ? " — " + fields(data) : "") : " — " + ((data.error || {}).code || "request failed")));
+            return r.ok;
+          } catch(e) { lines.push(label + ": " + e.message); return false; }
+        }
+        try {
+          var token = await gbsGetToken(false);
+          if (!token) { lines.push("No Microsoft access token. Sign in first, then retry."); }
+          else {
+            lines.push("Cached account: " + (gbsCloudAccount ? gbsCloudAccount.username : "unknown"));
+            await check("Microsoft account", "me?$select=userPrincipalName", function(d){return d.userPrincipalName || "unknown";});
+            await check("OneDrive", "me/drive?$select=id,driveType,owner", function(d){return (d.driveType || "") + " / " + ((d.owner || {}).user || {}).displayName + " / ID " + String(d.id || "").slice(-8);});
+            var parts = GBS_ONEDRIVE_FOLDER.split("/");
+            for (var i=0; i<parts.length; i++) {
+              var path = parts.slice(0,i+1).map(encodeURIComponent).join("/");
+              if (!await check(parts[i], "me/drive/root:/" + path + ":?$select=id,name,folder")) break;
+            }
+            await check("Folder listing", "me/drive/root:/" + parts.map(encodeURIComponent).join("/") + ":/children?$top=1&$select=id");
+          }
+        } catch(e) { lines.push(e.message || String(e)); }
+        finally { gbsCloudSyncBusy = false; if(button) button.disabled = false; }
+        var panel = document.getElementById("gbsDiagnosticPanel");
+        if (!panel) {
+          panel = document.createElement("div"); panel.id = "gbsDiagnosticPanel"; panel.className = "no-print";
+          panel.style.cssText = "margin:12px;padding:14px;background:white;border:2px solid #334155;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere";
+          document.querySelector(".app-header").after(panel);
+        }
+        panel.textContent = lines.join("\n");
       };
       window.gbsMicrosoftConnectOrSync = function () { gbsSyncSurveys(true); };
       function gbsScheduleCloudSync() {
