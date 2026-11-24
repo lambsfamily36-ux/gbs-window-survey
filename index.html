@@ -683,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.7</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.8</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -1136,7 +1136,12 @@
                 <button type="button" id="penToolBtn" class="tool-btn active" onclick="selectSketchTool('pen')">Pen</button>
                 <button type="button" id="eraserToolBtn" class="tool-btn" onclick="selectSketchTool('eraser')">Eraser</button>
                 <button type="button" class="tool-btn" onclick="insertWindowBox()">+ Window Box</button>
-                <button type="button" class="tool-btn" onclick="clearSketchPad()">Clear Sketch</button>
+                <button type="button" class="tool-btn" onclick="clearSketchPad()">Clear Page</button>
+                <button type="button" class="tool-btn" onclick="changeDrawingPage(-1)">Previous</button>
+                <span id="drawingPageLabel">Page 1 of 1</span>
+                <button type="button" class="tool-btn" onclick="changeDrawingPage(1)">Next</button>
+                <button type="button" class="tool-btn" onclick="addDrawingPage()">+ Add Drawing Page</button>
+                <button type="button" class="tool-btn" onclick="deleteDrawingPage()">Delete Page</button>
               </div>
               <div class="sketch-wrap" id="sketchWrap">
                 <canvas id="sketchCanvas"></canvas>
@@ -1479,12 +1484,12 @@
       function gbsPdf(entry) {
         if(!window.jspdf) throw new Error("PDF library unavailable; retry online");
         var d=new window.jspdf.jsPDF(), y=18;
-        function line(t){d.setFontSize(10); var lines=d.splitTextToSize(String(t),180); lines.forEach(function(l){if(y>280){d.addPage();y=18;}d.text(l,15,y);y+=5;});}
-        function heading(t){if(y>260){d.addPage();y=18;}d.setFontSize(15);d.text(t,15,y);y+=9;}
-        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(v===null||v===""||v===undefined||k==="sketchData"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():k.replace(/([a-z])([A-Z])/g,"$1 $2"))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
-        function image(src){if(!src)return;var props=d.getImageProperties(src), w=Math.min(180,100*props.width/props.height), h=w*props.height/props.width;if(y+h>280){d.addPage();y=18;}d.addImage(src,props.fileType,15,y,w,h);y+=h+5;}
+        function line(t){d.setFontSize(10); var lines=d.splitTextToSize(String(t),180); lines.forEach(function(l){if(y>280){d.addPage("a4","portrait");y=18;}d.text(l,15,y);y+=5;});}
+        function heading(t){if(y>260){d.addPage("a4","portrait");y=18;}d.setFontSize(15);d.text(t,15,y);y+=9;}
+        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(v===null||v===""||v===undefined||k==="sketchData"||k==="drawingPages"||k==="drawingPageIndex"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():k.replace(/([a-z])([A-Z])/g,"$1 $2"))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
+        function image(src){if(!src)return;var props=d.getImageProperties(src), w=Math.min(180,100*props.width/props.height), h=w*props.height/props.width;if(y+h>280){d.addPage("a4","portrait");y=18;}d.addImage(src,props.fileType,15,y,w,h);y+=h+5;}
         heading("GBS JOINERY - WINDOW SITE SURVEY");fields(entry.payload.job);
-        (entry.payload.windows||[]).forEach(function(w,i){d.addPage();y=18;heading("Window "+(w.mark||i+1));fields(w);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);});});
+        (entry.payload.windows||[]).forEach(function(w,i){d.addPage("a4","portrait");y=18;heading("Window "+(w.mark||i+1));fields(w);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);}); (w.drawingPages||[]).forEach(function(src,j){d.addPage("a4","landscape");d.setFontSize(15);d.text("Window "+(w.mark||i+1)+" - Drawing "+(j+2),15,15);if(src){var pr=d.getImageProperties(src), scale=Math.min(267/pr.width,175/pr.height);d.addImage(src,pr.fileType,15,23,pr.width*scale,pr.height*scale);}});});
         return d.output("blob");
       }
       async function gbsUploadCloudSurvey(token, entry, existing) {
@@ -1564,7 +1569,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v1.7"];
+        var lines = ["OneDrive diagnostics v1.8"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
@@ -2230,7 +2235,7 @@
                 '</div>' +
               '</div>' +
               photosHtml +
-            '</div>';
+            '</div>' + (w.drawingPages||[]).map(function(src,j){return '<div style="break-before:page;page-break-before:always"><h2>Window ' + escHtml(w.mark||"") + ' - Drawing ' + (j+2) + '</h2>' + (src ? '<img style="width:100%;object-fit:contain" src="' + src + '">' : 'Blank drawing page') + '</div>';}).join("");
         }
 
         return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>GBS Window Survey - ' + escHtml(j.jobNo || j.clientName || "Report") + '</title>' +
@@ -2756,32 +2761,31 @@
         }
       }
 
+      var drawingOwner = null, drawingIndex = 0, drawingLoading = false, drawingGeneration = 0;
+      function drawingPages(w) { if (!Array.isArray(w.drawingPages)) w.drawingPages=[]; return w.drawingPages; }
       function restoreSketchToCanvas() {
-        var canvas = ensureSketchCanvasSize();
-        if (!canvas) return;
-        var ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        var win = currentWindow();
-        if (win && win.sketchData) {
-          var img = new Image();
-          img.onload = function () {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          };
-          img.src = win.sketchData;
-        }
+        var win=currentWindow(), pages=drawingPages(win);
+        if(drawingOwner!==win){drawingIndex=0; drawingOwner=win;}
+        drawingIndex=Math.min(drawingIndex,pages.length);
+        var wrap=document.getElementById("sketchWrap");
+        wrap.style.height=drawingIndex ? "auto" : "270px";
+        wrap.style.aspectRatio=drawingIndex ? "297 / 210" : "auto";
+        var split=wrap.closest(".split-grid"); if(split) split.style.gridTemplateColumns=drawingIndex ? "1fr" : "";
+        document.getElementById("drawingPageLabel").textContent="Page "+(drawingIndex+1)+" of "+(pages.length+1);
+        var canvas=ensureSketchCanvasSize(), ctx=canvas.getContext("2d"), gen=++drawingGeneration;
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        var src=drawingIndex ? pages[drawingIndex-1] : win.sketchData;
+        drawingLoading=!!src;
+        if(src){var img=new Image();img.onload=function(){if(gen!==drawingGeneration)return;ctx.drawImage(img,0,0,canvas.width,canvas.height);drawingLoading=false;};img.onerror=function(){if(gen===drawingGeneration)drawingLoading=false;};img.src=src;}
       }
-
       function captureSketchToWindow() {
-        var canvas = document.getElementById("sketchCanvas");
-        if (!canvas || canvas.width === 0 || canvas.height === 0) return;
-        try {
-          currentWindow().sketchData = canvas.toDataURL("image/png");
-        } catch (err) {
-          // Ignore export error
-        }
+        var canvas=document.getElementById("sketchCanvas"), win=currentWindow();
+        if(drawingOwner!==win||drawingLoading||!canvas||!canvas.width||!canvas.height)return;
+        try {var src=canvas.toDataURL("image/png");if(drawingIndex)drawingPages(win)[drawingIndex-1]=src;else win.sketchData=src;}catch(err){}
       }
+      window.changeDrawingPage=function(delta){captureSketchToWindow();drawingIndex=Math.max(0,Math.min(drawingPages(currentWindow()).length,drawingIndex+delta));restoreSketchToCanvas();autoSave();};
+      window.addDrawingPage=function(){captureSketchToWindow();var pages=drawingPages(currentWindow());pages.push("");drawingIndex=pages.length;restoreSketchToCanvas();autoSave();};
+      window.deleteDrawingPage=function(){if(!drawingIndex){showNotice("Use Clear Page to clear the original sketch.","info");return;}if(!confirm("Delete this drawing page?"))return;drawingPages(currentWindow()).splice(drawingIndex-1,1);drawingIndex--;restoreSketchToCanvas();autoSave();};
 
       window.selectSketchTool = function (tool) {
         activeTool = tool;
@@ -2796,7 +2800,8 @@
         if (!canvas) return;
         var ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        currentWindow().sketchData = "";
+        ++drawingGeneration; drawingLoading=false;
+        if(drawingIndex) drawingPages(currentWindow())[drawingIndex-1]=""; else currentWindow().sketchData = "";
         autoSave();
       };
 
@@ -2876,6 +2881,7 @@
         canvas.dataset.sketchReady = "1";
 
         function startDraw(e, ptrId) {
+          if(drawingLoading)return;
           if (e.cancelable) e.preventDefault();
           ensureSketchCanvasSize();
           drawingActive = true;
@@ -3204,7 +3210,7 @@
           entries.forEach(function (entry) {
             (entry.payload.windows || []).forEach(function (win) {
               photoCount += Array.isArray(win.photos) ? win.photos.length : 0;
-              if (win.sketchData) sketchCount++;
+              if (win.sketchData) sketchCount++; sketchCount += (win.drawingPages||[]).filter(Boolean).length;
             });
           });
           var backup = {
@@ -3271,7 +3277,7 @@
                 valid.forEach(function (entry) {
                   entry.payload.windows.forEach(function (win) {
                     photoCount += Array.isArray(win.photos) ? win.photos.length : 0;
-                    if (win.sketchData) sketchCount++;
+                    if (win.sketchData) sketchCount++; sketchCount += (win.drawingPages||[]).filter(Boolean).length;
                   });
                 });
                 updateSavedSurveyCountBadge();
