@@ -682,7 +682,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.4</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.5</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -1343,8 +1343,9 @@
         },
         cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
       };
-      var GBS_GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
-      var GBS_ONEDRIVE_FOLDER = "Desktop/Customer database/Survey in progress/Saved surveys";
+      var GBS_GRAPH_SCOPES = ["User.Read", "Files.ReadWrite.All"];
+      var GBS_SHARE_ID = "u!aHR0cHM6Ly9nYnNqb2luZXJ5LW15LnNoYXJlcG9pbnQuY29tLzpmOi9yL3BlcnNvbmFsL2RhdmlkX2dic2pvaW5lcnlfY29fdWsvRG9jdW1lbnRzL0Rlc2t0b3AvQ3VzdG9tZXIlMjBkYXRhYmFzZS9TdXJ2ZXklMjBpbiUyMHByb2dyZXNzL1NhdmVkJTIwc3VydmV5cz9kPXdjMjIzNjk5MzE4NzI0MmRkYTI0MDI3ZmI4NWQyMTQzOSZjc2Y9MSZ3ZWI9MSZlPXY4MWN1dg";
+      var gbsFolder = null;
       var gbsMsalApp = null;
       var gbsCloudAccount = null;
       var gbsCloudSyncTimer = null;
@@ -1405,11 +1406,19 @@
         if (extra) Object.keys(extra).forEach(function(k){ h[k] = extra[k]; });
         return h;
       }
-      function gbsGraphFolderUrl() {
-        var encoded = GBS_ONEDRIVE_FOLDER.split("/").map(encodeURIComponent).join("/");
-        return "https://graph.microsoft.com/v1.0/me/drive/root:/" + encoded + ":";
+      async function gbsResolveFolder(token) {
+        var r = await fetch("https://graph.microsoft.com/v1.0/shares/" + GBS_SHARE_ID + "/driveItem", {headers:gbsGraphHeaders(token), cache:"no-store"});
+        if (!r.ok) throw new Error("Shared folder access failed (" + r.status + "). Check edit permission for the signed-in account");
+        var d = await r.json();
+        d = d.remoteItem || d;
+        if (!d.folder || !d.id || !d.parentReference || !d.parentReference.driveId) throw new Error("Shared folder identity unavailable");
+        gbsFolder = {id:d.id, driveId:d.parentReference.driveId};
+        return gbsFolder;
       }
+      function gbsDriveUrl() { return "https://graph.microsoft.com/v1.0/drives/" + encodeURIComponent(gbsFolder.driveId); }
+      function gbsGraphFolderUrl() { return gbsDriveUrl() + "/items/" + encodeURIComponent(gbsFolder.id); }
       async function gbsListCloudFiles(token) {
+        await gbsResolveFolder(token);
         var url = gbsGraphFolderUrl() + "/children?$select=id,name,file,size,lastModifiedDateTime";
         var all = [];
         while (url) {
@@ -1422,7 +1431,7 @@
         return all;
       }
       async function gbsDownloadCloudSurvey(token, file) {
-        var resp = await fetch("https://graph.microsoft.com/v1.0/me/drive/items/" + encodeURIComponent(file.id) + "/content", { headers: gbsGraphHeaders(token) });
+        var resp = await fetch(gbsDriveUrl() + "/items/" + encodeURIComponent(file.id) + "/content", { headers: gbsGraphHeaders(token) });
         if (!resp.ok) throw new Error("Could not download " + file.name + " (" + resp.status + ").");
         return await resp.json();
       }
@@ -1430,8 +1439,7 @@
         if (!entry || !entry.payload || !entry.surveyId) return;
         var safeId = String(entry.surveyId).replace(/[^a-zA-Z0-9_-]/g, "_");
         var fileName = "survey_" + safeId + ".json";
-        var path = GBS_ONEDRIVE_FOLDER.split("/").map(encodeURIComponent).join("/") + "/" + encodeURIComponent(fileName);
-        var url = "https://graph.microsoft.com/v1.0/me/drive/root:/" + path + ":/content";
+        var url = gbsGraphFolderUrl() + ":/" + encodeURIComponent(fileName) + ":/content";
         var body = JSON.stringify({ gbsSurveyFormat: 1, surveyId: entry.surveyId, savedAt: entry.savedAt || new Date().toISOString(), payload: entry.payload });
         var resp = await fetch(url, { method: "PUT", headers: gbsGraphHeaders(token, { "Content-Type": "application/json" }), body: body });
         if (!resp.ok) throw new Error("OneDrive could not save " + fileName + " (" + resp.status + ").");
@@ -1502,7 +1510,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v1.4"];
+        var lines = ["OneDrive diagnostics v1.5"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
@@ -1518,12 +1526,9 @@
             lines.push("Cached account: " + (gbsCloudAccount ? gbsCloudAccount.username : "unknown"));
             await check("Microsoft account", "me?$select=userPrincipalName", function(d){return d.userPrincipalName || "unknown";});
             await check("OneDrive", "me/drive?$select=id,driveType,owner", function(d){return (d.driveType || "") + " / " + ((d.owner || {}).user || {}).displayName + " / ID " + String(d.id || "").slice(-8);});
-            var parts = GBS_ONEDRIVE_FOLDER.split("/");
-            for (var i=0; i<parts.length; i++) {
-              var path = parts.slice(0,i+1).map(encodeURIComponent).join("/");
-              if (!await check(parts[i], "me/drive/root:/" + path + ":?$select=id,name,folder")) break;
-            }
-            await check("Folder listing", "me/drive/root:/" + parts.map(encodeURIComponent).join("/") + ":/children?$top=1&$select=id");
+            await gbsResolveFolder(token);
+            lines.push("Shared Saved surveys folder: resolved OK");
+            await check("Shared folder listing", "drives/" + encodeURIComponent(gbsFolder.driveId) + "/items/" + encodeURIComponent(gbsFolder.id) + "/children?$top=1&$select=id");
           }
         } catch(e) { lines.push(e.message || String(e)); }
         finally { gbsCloudSyncBusy = false; if(button) button.disabled = false; }
