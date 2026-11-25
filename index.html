@@ -683,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.1</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.3</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -989,9 +989,9 @@
               </tr>
               <tr>
                 <td class="lbl-cell">External Finish</td>
-                <td class="val-cell"><input type="text" class="s-input win-input" data-win="extFinish" placeholder="e.g. Factory painted RAL 9016 / Stain"></td>
+                <td class="val-cell"><select class="s-select finish-picker" data-finish="extFinish" aria-label="External finish"><option value="">-- Select Finish --</option><option>Clean White</option><option>Old English White</option><option>Gardinia</option><option>RAL 9010 – Pure White</option><option>RAL 9016 – Traffic White</option><option>RAL 9003 – Signal White</option><option>RAL 9001 – Cream</option><option>RAL 1013 – Oyster White</option><option>RAL 7032 – Pebble Grey</option><option>RAL 7035 – Light Grey</option><option>RAL 7040 – Window Grey</option><option>RAL 7016 – Anthracite Grey</option><option>RAL 7021 – Black Grey</option><option>RAL 9005 – Jet Black</option><option>RAL 7033 – Cement Grey</option><option>RAL 6021 – Pale Green</option><option>RAL 6005 – Moss Green</option><option>RAL 5011 – Steel Blue</option><option>RAL 8017 – Chocolate Brown</option><option>Stain</option><option>Clear Lacquer</option><option>Primed Only</option><option>Unfinished</option><option value="__other__">Other – Specify Colour</option></select><input type="text" class="s-input win-input" data-win="extFinish" placeholder="Enter colour name or code" style="display:none;margin-top:4px;"></td>
                 <td class="lbl-cell">Internal Finish</td>
-                <td class="val-cell"><input type="text" class="s-input win-input" data-win="intFinish" placeholder="e.g. Match external / Primed / Lacquer"></td>
+                <td class="val-cell"><select class="s-select finish-picker" data-finish="intFinish" aria-label="Internal finish"><option value="">-- Select Finish --</option><option>Clean White</option><option>Old English White</option><option>Gardinia</option><option>RAL 9010 – Pure White</option><option>RAL 9016 – Traffic White</option><option>RAL 9003 – Signal White</option><option>RAL 9001 – Cream</option><option>RAL 1013 – Oyster White</option><option>RAL 7032 – Pebble Grey</option><option>RAL 7035 – Light Grey</option><option>RAL 7040 – Window Grey</option><option>RAL 7016 – Anthracite Grey</option><option>RAL 7021 – Black Grey</option><option>RAL 9005 – Jet Black</option><option>RAL 7033 – Cement Grey</option><option>RAL 6021 – Pale Green</option><option>RAL 6005 – Moss Green</option><option>RAL 5011 – Steel Blue</option><option>RAL 8017 – Chocolate Brown</option><option>Stain</option><option>Clear Lacquer</option><option>Primed Only</option><option>Unfinished</option><option>Match External</option><option value="__other__">Other – Specify Colour</option></select><input type="text" class="s-input win-input" data-win="intFinish" placeholder="Enter colour name or code" style="display:none;margin-top:4px;"></td>
               </tr>
             </tbody>
           </table>
@@ -1609,7 +1609,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v2.1"];
+        var lines = ["OneDrive diagnostics v2.3"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
@@ -1989,6 +1989,14 @@
         document.getElementById("standardRails").style.display = sash ? "none" : "grid";
         document.getElementById("sashRails").style.display = sash ? "grid" : "none";
       }
+      function populateFinishPickers() {
+        document.querySelectorAll('.finish-picker').forEach(function(picker){
+          var field = document.querySelector('[data-win="'+picker.dataset.finish+'"]');
+          var known = Array.from(picker.options).some(function(o){return o.value !== '__other__' && o.value === field.value;});
+          picker.value = known ? field.value : '__other__';
+          field.style.display = known ? 'none' : '';
+        });
+      }
       function populateFields() {
         var win = currentWindow();
         if (!win.checks) win.checks = {};
@@ -2011,6 +2019,7 @@
           winInputs[k].value = win[wk] !== undefined ? win[wk] : "";
         }
 
+        populateFinishPickers();
         var winChks = document.querySelectorAll(".win-chk");
         for (var m = 0; m < winChks.length; m++) {
           var wck = winChks[m].getAttribute("data-win");
@@ -2026,6 +2035,17 @@
       }
 
       function attachInputHandlers() {
+        document.querySelectorAll('.finish-picker').forEach(function(picker){
+          picker.addEventListener('change',function(){
+            var field = document.querySelector('[data-win="'+picker.dataset.finish+'"]');
+            var other = picker.value === '__other__';
+            field.value = other ? '' : picker.value;
+            field.style.display = other ? '' : 'none';
+            currentWindow()[picker.dataset.finish] = field.value;
+            autoSave();
+            if(other) field.focus();
+          });
+        });
         var jobInputs = document.querySelectorAll(".job-input");
         for (var i = 0; i < jobInputs.length; i++) {
           (function (el) {
