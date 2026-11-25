@@ -683,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.0</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.1</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -937,9 +937,9 @@
                     <option>Fixed Light / Screen</option>
                   </select>
                 </td>
-                <td class="lbl-cell">Transom / Mullion</td>
+                <td class="lbl-cell" id="railHeading">Transom / Mullion</td>
                 <td class="val-cell">
-                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                  <div id="standardRails" style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
                     <div>
                       <label for="transomSelect" style="display:block; font-size:11px; font-weight:700; color:#334155; margin-bottom:2px;">Transom</label>
                       <select id="transomSelect" class="s-select win-input" data-win="transom">
@@ -958,6 +958,10 @@
                         <option value="Other">Other</option>
                       </select>
                     </div>
+                  </div>
+                  <div id="sashRails" style="display:none; grid-template-columns:1fr 1fr; gap:6px;">
+                    <div><label for="midRail" style="display:block;font-size:11px;font-weight:700;">Mid Rail (mm)</label><input id="midRail" class="s-input win-input" data-win="midRail" type="text" inputmode="decimal" placeholder="mm"></div>
+                    <div><label for="bottomRail" style="display:block;font-size:11px;font-weight:700;">Bottom Rail (mm)</label><input id="bottomRail" class="s-input win-input" data-win="bottomRail" type="text" inputmode="decimal" placeholder="mm"></div>
                   </div>
                 </td>
               </tr>
@@ -1289,7 +1293,7 @@
                 <th>Location</th>
                 <th>Qty</th>
                 <th>Min W × Min H (mm)</th>
-                <th>Type &amp; Transom / Mullion</th>
+                <th>Type &amp; Rails / Transom / Mullion</th>
                 <th>Timber &amp; Finish</th>
                 <th>Glazing &amp; Bars</th>
                 <th>Photos</th>
@@ -1486,10 +1490,10 @@
         var d=new window.jspdf.jsPDF(), y=18;
         function line(t){d.setFontSize(10); var lines=d.splitTextToSize(String(t),180); lines.forEach(function(l){if(y>280){d.addPage("a4","portrait");y=18;}d.text(l,15,y);y+=5;});}
         function heading(t){if(y>260){d.addPage("a4","portrait");y=18;}d.setFontSize(15);d.text(t,15,y);y+=9;}
-        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(v===null||v===""||v===undefined||k==="sketchData"||k==="drawingPages"||k==="drawingPageIndex"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():(k==="siteContact"?"Previous Site Contact":k.replace(/([a-z])([A-Z])/g,"$1 $2")))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
+        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(["transom","mullion","midRail","bottomRail"].indexOf(k)!==-1)return;if(v===null||v===""||v===undefined||k==="sketchData"||k==="drawingPages"||k==="drawingPageIndex"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():(k==="siteContact"?"Previous Site Contact":k.replace(/([a-z])([A-Z])/g,"$1 $2")))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
         function image(src){if(!src)return;var props=d.getImageProperties(src), w=Math.min(180,100*props.width/props.height), h=w*props.height/props.width;if(y+h>280){d.addPage("a4","portrait");y=18;}d.addImage(src,props.fileType,15,y,w,h);y+=h+5;}
         heading("GBS JOINERY - WINDOW SITE SURVEY");fields(entry.payload.job);
-        (entry.payload.windows||[]).forEach(function(w,i){d.addPage("a4","portrait");y=18;heading("Window "+(w.mark||i+1));fields(w);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);}); (w.drawingPages||[]).forEach(function(src,j){d.addPage("a4","landscape");d.setFontSize(15);d.text("Window "+(w.mark||i+1)+" - Drawing "+(j+2),15,15);if(src){var pr=d.getImageProperties(src), scale=Math.min(267/pr.width,175/pr.height);d.addImage(src,pr.fileType,15,23,pr.width*scale,pr.height*scale);}});});
+        (entry.payload.windows||[]).forEach(function(w,i){d.addPage("a4","portrait");y=18;heading("Window "+(w.mark||i+1));fields(w);railDetails(w).filter(Boolean).forEach(line);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);}); (w.drawingPages||[]).forEach(function(src,j){d.addPage("a4","landscape");d.setFontSize(15);d.text("Window "+(w.mark||i+1)+" - Drawing "+(j+2),15,15);if(src){var pr=d.getImageProperties(src), scale=Math.min(267/pr.width,175/pr.height);d.addImage(src,pr.fileType,15,23,pr.width*scale,pr.height*scale);}});});
         return d.output("blob");
       }
       async function gbsPhotoFolder(token, parent, name) {
@@ -1605,7 +1609,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v2.0"];
+        var lines = ["OneDrive diagnostics v2.1"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
@@ -1715,6 +1719,8 @@
           winType: "",
           transom: "",
           mullion: "",
+          midRail: "",
+          bottomRail: "",
           timber: "",
           frameDepth: "",
           extFinish: "",
@@ -1973,6 +1979,16 @@
       };
 
       /* Populate & Bind Form Inputs */
+      function isSashWindow(w) { return /sash/i.test(w.winType || ""); }
+      function railDetails(w) {
+        return isSashWindow(w) ? [w.midRail ? "Mid Rail: " + w.midRail + " mm" : "", w.bottomRail ? "Bottom Rail: " + w.bottomRail + " mm" : ""] : [w.transom ? "Transom: " + w.transom : "", w.mullion ? "Mullion: " + w.mullion : ""];
+      }
+      function updateRailFields() {
+        var sash = isSashWindow(currentWindow());
+        document.getElementById("railHeading").textContent = sash ? "Mid Rail / Bottom Rail" : "Transom / Mullion";
+        document.getElementById("standardRails").style.display = sash ? "none" : "grid";
+        document.getElementById("sashRails").style.display = sash ? "grid" : "none";
+      }
       function populateFields() {
         var win = currentWindow();
         if (!win.checks) win.checks = {};
@@ -2001,6 +2017,7 @@
           winChks[m].checked = Boolean(win.checks[wck]);
         }
 
+        updateRailFields();
         toggleCillProjSize(document.querySelector('[data-win="cillProjHas"]'));
         renderWindowPills();
         renderPhotoGallery();
@@ -2039,6 +2056,7 @@
             var handler = function () {
               var key = el.getAttribute("data-win");
               currentWindow()[key] = el.value;
+              if (key === "winType") updateRailFields();
               if (key === "mark" || key === "room") {
                 renderWindowPills();
               }
@@ -2252,7 +2270,7 @@
                 '<tr><td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">Reveal Depth</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml(w.revealDepth ? w.revealDepth + " mm" : "—") + '</td>' +
                     '<td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">Cill Projection</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml(w.cillProjHas === "Yes" ? ("Yes (" + (w.cillProj || "Joggle TBC") + ")") : "No") + '</td></tr>' +
                 '<tr><td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">Window Type</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml(w.winType || "—") + '</td>' +
-                    '<td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">Transom / Mullion</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml([w.transom ? "T: " + w.transom : "", w.mullion ? "M: " + w.mullion : ""].filter(Boolean).join(" / ") || "—") + '</td></tr>' +
+                    '<td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">' + (isSashWindow(w) ? "Mid Rail / Bottom Rail" : "Transom / Mullion") + '</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml(railDetails(w).filter(Boolean).join(" / ") || "—") + '</td></tr>' +
                 '<tr><td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">Timber &amp; Depth</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml([w.timber, w.frameDepth].filter(Boolean).join(" / ") || "—") + '</td>' +
                     '<td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">Ext / Int Finish</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml([w.extFinish, w.intFinish].filter(Boolean).join(" / ") || "—") + '</td></tr>' +
                 '<tr><td style="border:1px solid #64748b;padding:4px 6px;background:#f8fafc;font-weight:600;">DGU &amp; Toughened</td><td style="border:1px solid #64748b;padding:4px 6px;">' + escHtml([w.dguSpec, w.toughened ? "Toughened: " + w.toughened : ""].filter(Boolean).join(" • ") || "—") + '</td>' +
@@ -3124,8 +3142,7 @@
               dims,
               [
                 w.winType,
-                w.transom ? ("Transom: " + w.transom) : "",
-                w.mullion ? ("Mullion: " + w.mullion) : ""
+                railDetails(w).filter(Boolean).join(" / ")
               ].filter(Boolean).join(" — ") || "—",
               [w.timber, w.extFinish].filter(Boolean).join(" / ") || "—",
               [
