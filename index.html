@@ -683,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.9</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.0</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -764,8 +764,8 @@
               <tr>
                 <td class="lbl-cell">Contact Phone</td>
                 <td class="val-cell"><input type="tel" class="s-input job-input" data-job="contactPhone" placeholder="07xxx xxxxxx"></td>
-                <td class="lbl-cell">Site Contact</td>
-                <td class="val-cell"><input type="text" class="s-input job-input" data-job="siteContact" placeholder="On-site contact if different"></td>
+                <td class="lbl-cell">Customer Email Address</td>
+                <td class="val-cell"><input type="email" class="s-input job-input" data-job="customerEmail" placeholder="customer@example.com" autocomplete="email"></td>
               </tr>
               <tr>
                 <td class="lbl-cell">Site Address</td>
@@ -1486,7 +1486,7 @@
         var d=new window.jspdf.jsPDF(), y=18;
         function line(t){d.setFontSize(10); var lines=d.splitTextToSize(String(t),180); lines.forEach(function(l){if(y>280){d.addPage("a4","portrait");y=18;}d.text(l,15,y);y+=5;});}
         function heading(t){if(y>260){d.addPage("a4","portrait");y=18;}d.setFontSize(15);d.text(t,15,y);y+=9;}
-        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(v===null||v===""||v===undefined||k==="sketchData"||k==="drawingPages"||k==="drawingPageIndex"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():k.replace(/([a-z])([A-Z])/g,"$1 $2"))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
+        function fields(obj){Object.keys(obj||{}).forEach(function(k){var v=obj[k];if(v===null||v===""||v===undefined||k==="sketchData"||k==="drawingPages"||k==="drawingPageIndex"||k==="photos")return;if(typeof v==="object"){fields(v);return;}var el=document.querySelector('[data-job="'+k+'"], [data-win="'+k+'"]');var label=el&&el.closest('td')&&el.closest('td').previousElementSibling;line((label?label.textContent.trim():(k==="siteContact"?"Previous Site Contact":k.replace(/([a-z])([A-Z])/g,"$1 $2")))+": "+(typeof v==="boolean"?(v?"Yes":"No"):v));});}
         function image(src){if(!src)return;var props=d.getImageProperties(src), w=Math.min(180,100*props.width/props.height), h=w*props.height/props.width;if(y+h>280){d.addPage("a4","portrait");y=18;}d.addImage(src,props.fileType,15,y,w,h);y+=h+5;}
         heading("GBS JOINERY - WINDOW SITE SURVEY");fields(entry.payload.job);
         (entry.payload.windows||[]).forEach(function(w,i){d.addPage("a4","portrait");y=18;heading("Window "+(w.mark||i+1));fields(w);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);}); (w.drawingPages||[]).forEach(function(src,j){d.addPage("a4","landscape");d.setFontSize(15);d.text("Window "+(w.mark||i+1)+" - Drawing "+(j+2),15,15);if(src){var pr=d.getImageProperties(src), scale=Math.min(267/pr.width,175/pr.height);d.addImage(src,pr.fileType,15,23,pr.width*scale,pr.height*scale);}});});
@@ -1605,7 +1605,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v1.9"];
+        var lines = ["OneDrive diagnostics v2.0"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
@@ -1660,7 +1660,7 @@
           clientName: "",
           surveyorName: "",
           contactPhone: "",
-          siteContact: "",
+          customerEmail: "",
           siteAddress: "",
           postcode: "",
           propType: "",
@@ -2287,6 +2287,7 @@
                 '<td style="border:1px solid #64748b;padding:5px;background:#f8fafc;font-weight:700;width:16%;">Survey Date</td><td style="border:1px solid #64748b;padding:5px;width:34%;">' + escHtml(j.surveyDate || "—") + '</td></tr>' +
             '<tr><td style="border:1px solid #64748b;padding:5px;background:#f8fafc;font-weight:700;">Client</td><td style="border:1px solid #64748b;padding:5px;">' + escHtml(j.clientName || "—") + '</td>' +
                 '<td style="border:1px solid #64748b;padding:5px;background:#f8fafc;font-weight:700;">Surveyor</td><td style="border:1px solid #64748b;padding:5px;">' + escHtml(j.surveyorName || "—") + '</td></tr>' +
+            '<tr><td style="border:1px solid #64748b;padding:5px;background:#f8fafc;font-weight:700;">Customer Email Address</td><td colspan="3" style="border:1px solid #64748b;padding:5px;">' + escHtml(j.customerEmail || "—") + '</td></tr>' +
             '<tr><td style="border:1px solid #64748b;padding:5px;background:#f8fafc;font-weight:700;">Site Address</td><td colspan="3" style="border:1px solid #64748b;padding:5px;">' + escHtml([j.siteAddress, j.postcode].filter(Boolean).join(", ") || "—") + '</td></tr>' +
             '<tr><td style="border:1px solid #64748b;padding:5px;background:#f8fafc;font-weight:700;">Access &amp; Disposal</td><td colspan="3" style="border:1px solid #64748b;padding:5px;">' + escHtml([j.parking, j.disposal, j.utilities, j.siteAccessNotes].filter(Boolean).join(" • ") || "—") + '</td></tr>' +
           '</table>' +
@@ -3352,7 +3353,7 @@
             clientName: "",
             surveyorName: "",
             contactPhone: "",
-            siteContact: "",
+            customerEmail: "",
             siteAddress: "",
             postcode: "",
             propType: "",
