@@ -683,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.8</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v1.9</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -1492,6 +1492,36 @@
         (entry.payload.windows||[]).forEach(function(w,i){d.addPage("a4","portrait");y=18;heading("Window "+(w.mark||i+1));fields(w);if(w.sketchData){line("Sketch");image(w.sketchData);} (w.photos||[]).forEach(function(p){line(p.caption||"Photo");image(p.src);}); (w.drawingPages||[]).forEach(function(src,j){d.addPage("a4","landscape");d.setFontSize(15);d.text("Window "+(w.mark||i+1)+" - Drawing "+(j+2),15,15);if(src){var pr=d.getImageProperties(src), scale=Math.min(267/pr.width,175/pr.height);d.addImage(src,pr.fileType,15,23,pr.width*scale,pr.height*scale);}});});
         return d.output("blob");
       }
+      async function gbsPhotoFolder(token, parent, name) {
+        var url=parent+":/"+encodeURIComponent(name);
+        var r=await fetch(url,{headers:gbsGraphHeaders(token),cache:"no-store"});
+        if(r.status===404){
+          var c=await fetch(parent+"/children",{method:"POST",headers:gbsGraphHeaders(token,{"Content-Type":"application/json"}),body:JSON.stringify({name:name,folder:{},"@microsoft.graph.conflictBehavior":"fail"})});
+          if(!c.ok && c.status!==409) throw new Error("Photo folder creation failed ("+c.status+")");
+          r=await fetch(url,{headers:gbsGraphHeaders(token),cache:"no-store"});
+        }
+        if(!r.ok) throw new Error("Photo folder access failed ("+r.status+")");
+        var d=await r.json(); if(!d.folder||!d.id) throw new Error("Photo folder unavailable");
+        return gbsDriveUrl()+"/items/"+encodeURIComponent(d.id);
+      }
+      async function gbsSavePhotos(token, entry, root) {
+        var photos=[];
+        (entry.payload.windows||[]).forEach(function(w,i){(w.photos||[]).forEach(function(p,j){if(p.src)photos.push({src:p.src, name:"W"+(i+1)+" - Photo "+String(j+1).padStart(2,"0")});});});
+        if(!photos.length)return;
+        var folder=await gbsPhotoFolder(token,root,gbsBase(entry));
+        var files=await gbsListAt(token,folder);
+        for(var i=0;i<photos.length;i++){
+          var p=photos[i], blob=await (await fetch(p.src)).blob();
+          var bytes=await blob.arrayBuffer();
+          var digest=await crypto.subtle.digest("SHA-256",bytes);
+          var hash=Array.from(new Uint8Array(digest)).map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+          var ext=blob.type==="image/png"?".png":".jpg";
+          var name=p.name+" - "+hash.slice(0,16)+ext;
+          if(files.some(function(f){return f.name===name && f.size===blob.size;}))continue;
+          var r=await fetch(folder+":/"+encodeURIComponent(name)+":/content",{method:"PUT",headers:gbsGraphHeaders(token,{"Content-Type":blob.type||"image/jpeg"}),body:blob});
+          if(!r.ok)throw new Error("Photo upload failed ("+r.status+")");
+        }
+      }
       async function gbsUploadCloudSurvey(token, entry, existing) {
         var base=existing && existing.cloudName ? existing.cloudName.replace(/\.json$/i,"") : gbsBase(entry);
         var pdf=gbsPdf(entry);
@@ -1538,6 +1568,12 @@
             var existing = remoteById[merged[j].surveyId];
             if (!existing || !existing.inData || String(merged[j].savedAt || "") > String(existing.savedAt || "") || !remote.some(function(f){return f.name===existing.cloudName.replace(/\.json$/i,".pdf");})) await gbsUploadCloudSurvey(token, merged[j], existing);
           }
+          var photoRoot=null;
+          for(var pi=0;pi<merged.length;pi++){
+            if(!(merged[pi].payload.windows||[]).some(function(w){return (w.photos||[]).some(function(p){return !!p.src;});}))continue;
+            if(!photoRoot)photoRoot=await gbsPhotoFolder(token,gbsGraphFolderUrl(),"Photographs");
+            await gbsSavePhotos(token,merged[pi],photoRoot);
+          }
           updateSavedSurveyCountBadge();
           gbsCloudButton("OneDrive: Signed in • Sync now");
           showNotice("OneDrive sync complete. " + merged.length + " saved survey(s) available on this device.", "info");
@@ -1569,7 +1605,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v1.8"];
+        var lines = ["OneDrive diagnostics v1.9"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
