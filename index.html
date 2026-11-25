@@ -683,7 +683,7 @@
       <div class="brand-block">
         <div class="brand-badge">GBS</div>
         <div>
-          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.3</small></h1>
+          <h1 class="brand-title">GBS Joinery Window Site Survey <small>v2.4</small></h1>
           <div class="brand-sub" id="connectionStatusSub">iPad Field Survey &amp; Schedule • Offline Ready</div>
         </div>
       </div>
@@ -695,7 +695,7 @@
         <button type="button" class="btn" id="cloudDiagnosticButton" onclick="gbsDiagnoseOneDrive()">Check OneDrive</button>
         <button type="button" class="btn" onclick="gbsResetMicrosoftSignIn()">Reset Microsoft Sign-in</button>
         <button type="button" class="btn" onclick="openSavedSurveysModal()">Saved Surveys (<span id="savedSurveyCount">0</span>)</button>
-        <button type="button" class="btn" onclick="exportSurveyJson()">Export JSON</button>
+        <button type="button" class="btn" id="undoSurveyBtn" onclick="undoSurveyChange()" disabled>↶ Undo</button>
         <button type="button" class="btn btn-light" onclick="printSurvey()">Print / PDF</button>
         <button type="button" class="btn btn-red" onclick="clearSurvey()">New / Clear</button>
       </div>
@@ -1609,7 +1609,7 @@
         gbsCloudSyncBusy = true;
         var button = document.getElementById("cloudDiagnosticButton");
         if (button) button.disabled = true;
-        var lines = ["OneDrive diagnostics v2.3"];
+        var lines = ["OneDrive diagnostics v2.4"];
         async function check(label, path, fields) {
           try {
             var r = await fetch("https://graph.microsoft.com/v1.0/" + path, {headers:gbsGraphHeaders(token), cache:"no-store"});
@@ -2391,6 +2391,7 @@
       window.saveSurvey = function (refreshModal) {
         try {
           captureSketchToWindow();
+          recordUndoChange();
           if (!surveyData.surveyId) {
             surveyData.surveyId = "survey_" + Date.now();
           }
@@ -2431,7 +2432,35 @@
         }
       };
 
+      // Session-local undo history, scoped to the open survey.
+      var undoHistory = [], undoBaseline = null, undoBytes = 0;
+      function undoSnapshot() { return JSON.stringify(surveyData); }
+      function undoContent(raw) { var p=JSON.parse(raw); return JSON.stringify([p.job,p.windows]); }
+      function updateUndoButton() { var b=document.getElementById("undoSurveyBtn"); if(b)b.disabled=!undoHistory.length; }
+      function resetUndoHistory() { undoHistory=[]; undoBytes=0; undoBaseline=undoSnapshot(); updateUndoButton(); }
+      function recordUndoChange() {
+        var next=undoSnapshot();
+        if(!undoBaseline || JSON.parse(undoBaseline).surveyId!==surveyData.surveyId){resetUndoHistory();return;}
+        if(undoContent(next)!==undoContent(undoBaseline)) {
+          undoHistory.push(undoBaseline); undoBytes+=undoBaseline.length;
+          while(undoHistory.length>30 || (undoBytes>16000000 && undoHistory.length>1)) undoBytes-=undoHistory.shift().length;
+        }
+        undoBaseline=next; updateUndoButton();
+      }
+      window.undoSurveyChange=function(){
+        if(!undoHistory.length)return;
+        var raw=undoHistory.pop(); undoBytes-=raw.length;
+        var previous=JSON.parse(raw);
+        if(previous.surveyId!==surveyData.surveyId){resetUndoHistory();return;}
+        if(!previous.job.jobNo && surveyData.job.jobNo)previous.job.jobNo=surveyData.job.jobNo;
+        var sheet=surveyData.activeSheet;
+        surveyData=previous; surveyData.activeSheet=sheet;
+        drawingOwner=null; drawingIndex=0;
+        populateFields(); undoBaseline=undoSnapshot(); updateUndoButton(); autoSave();
+        showNotice("Last change undone. Restored survey saved.","info");
+      };
       function autoSave() {
+        recordUndoChange();
         if (!surveyData.surveyId) {
           surveyData.surveyId = "survey_" + Date.now();
         }
@@ -2757,6 +2786,7 @@
         if (parsed.activeSheet) {
           surveyData.activeSheet = parsed.activeSheet;
         }
+        resetUndoHistory();
       }
 
       function loadSurvey() {
@@ -2790,6 +2820,7 @@
           if (hasNoSavedLS || idbPhotos > currentPhotos) {
             applyLoadedPayload(idbPayload);
             populateFields();
+            resetUndoHistory();
             selectSheet(surveyData.activeSheet || "sheet1");
           }
         });
@@ -3410,6 +3441,7 @@
           selectSheet("sheet1");
           populateFields();
           updateSavedSurveyCountBadge();
+          resetUndoHistory();
           showNotice("Started a new blank survey (previous work kept in Saved Surveys).", "info");
         });
       };
@@ -3419,6 +3451,7 @@
         attachInputHandlers();
         attachSketchHandlers();
         populateFields();
+        resetUndoHistory();
         selectSheet(surveyData.activeSheet || "sheet1");
         updateNetworkBadge();
         updateSavedSurveyCountBadge();
